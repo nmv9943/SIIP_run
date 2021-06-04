@@ -10,13 +10,9 @@ using Dates
 using DataFrames
 using CSV
 
-using Cbc #solver
-
-#import PowerSystemCaseBuilder: build_RTS_GMLC_sys, build_modified_RTS_GMLC_DA_sys, build_modified_RTS_GMLC_RT_sys, download_RTS
-#import PowerSystemCaseBuilder:  build_modified_RTS_GMLC_DA_sys
+using CPLEX
 
 import PowerSystemCaseBuilder:  filter_kwargs,get_raw_data
-
 
 function build_modified_RTS_GMLC_DA_sys(; kwargs...)
     sys_kwargs = filter_kwargs(; kwargs...)
@@ -73,9 +69,6 @@ function build_modified_RTS_GMLC_DA_sys(; kwargs...)
     for d in PSY.get_components(PSY.Generator, sys, x -> x.name ∈ names)
         PSY.remove_component!(sys, d)
     end
-    # for br in PSY.get_components(PSY.DCBranch, sys)
-    #     PSY.remove_component!(sys, br)
-    # end
     for d in PSY.get_components(PSY.Storage, sys)
         PSY.remove_component!(sys, d)
     end
@@ -117,33 +110,12 @@ function build_modified_RTS_GMLC_DA_sys(; kwargs...)
         PSY.clear_services!(d)
     end
 
-    # for g in PSY.get_components(
-    #     PSY.RenewableDispatch,
-    #     sys,
-    #     x -> PSY.get_prime_mover(x) == PSY.PrimeMovers.PVe,
-    # )
-    #     rat_ = PSY.get_rating(g)
-    #     PSY.set_rating!(g, PSY.DISPATCH_INCREASE * rat_)
-    # end
-    #
-    # for g in PSY.get_components(
-    #     PSY.RenewableFix,
-    #     sys,
-    #     x -> PSY.get_prime_mover(x) == PSY.PrimeMovers.PVe,
-    # )
-    #     rat_ = PSY.get_rating(g)
-    #     PSY.set_rating!(g, PSY.FIX_DECREASE * rat_)
-    # end
-
-
     PSY.transform_single_time_series!(sys, 48, Hour(24))
     return sys
 end
 
 function RunScenario(problems,DA_RT_sequence,sys::System,run_name_base::String,num_steps::Int,month::Int)
 
-
-    #start_day = DateTime("10/4/2020  23:00:00", "d/m/y  H:M:S") + Hour(1)
     if us == false
         run_name = "rts-test_"*run_name_base*string(month)
         year = 2020
@@ -152,18 +124,6 @@ function RunScenario(problems,DA_RT_sequence,sys::System,run_name_base::String,n
         year = 2016
     end
     start_day = DateTime("1/"*string(month)*"/"*string(year)*"  00:00:00", "d/m/y  H:M:S")
-    #sys_RT = build_modified_RTS_GMLC_RT_sys(; raw_data = raw_data_path)
-    #PSY.transform_single_time_series!(sys_RT, 12, Hour(1))
-
-    #template_ed = template_economic_dispatch()
-    #set_transmission_model!(template_ed, DCPPowerModel)
-
-
-
-    #intervals = Dict("UC" => (Hour(24), Consecutive()), "ED" => (Hour(1), Consecutive()))
-
-
-    #print(get_initial_time(sim))
 
     if month == 1
         sim = Simulation(
@@ -187,8 +147,7 @@ function RunScenario(problems,DA_RT_sequence,sys::System,run_name_base::String,n
     execute!(sim)
 
     results = SimulationResults(sim);
-    uc_results = get_problem_results(results, "UC"); # UC stage result metadata
-    #ed_results = get_problem_results(results, "ED"); # ED stage result metadata
+    uc_results = get_problem_results(results, "UC");
 
     timestamps = get_realized_timestamps(uc_results)
     variables = read_realized_variables(uc_results)
@@ -237,7 +196,7 @@ function RunScenario(problems,DA_RT_sequence,sys::System,run_name_base::String,n
     export_parameters = Dict()
     if !isempty(parameters)
         for (p, v) in parameters
-            export_parameters[p] =  v #.* get_model_base_power(res)
+            export_parameters[p] =  v
         end
         write_data(export_parameters, folder_path; params = true)
     end
@@ -248,11 +207,6 @@ function RunScenario(problems,DA_RT_sequence,sys::System,run_name_base::String,n
 end
 
 function run_sim(run_name_base,copper1,lp1,i)
-
-    #run_name_base = name_base
-    #run_name_base = name_base #*string(i)*"_"*string(nbus)
-    #global run_idx = findall(isequal(run_name_base), l)[1]
-    #@info run_idx
 
     template_uc = OperationsProblemTemplate()
 
@@ -266,24 +220,6 @@ function run_sim(run_name_base,copper1,lp1,i)
     if us == true
         sys = System(joinpath(data_base,"US-data", run_name_base, "SIIP", "sys.json"))
         transform_single_time_series!(sys, horizon, interval);
-
-        # for line in get_components(Line, sys)
-        #     if (get_base_voltage(get_from(get_arc(line))) >= 230.0) &&
-        #        (get_base_voltage(get_to(get_arc(line))) >= 230.0)
-        #         #if get_area(get_from(get_arc(line))) != get_area(get_to(get_arc(line)))
-        #         @info "Changing $(get_name(line)) to MonitoredLine"
-        #         convert_component!(MonitoredLine, line, sys)
-        #     end
-        # end
-
-        #set_device_model!(template_uc, Line, StaticBranchUnbounded)
-
-
-        #set_device_model!(template, ThermalStandard, ThermalStandardUnitCommitment)
-        #set_device_model!(template_uc, ThermalStandard, ThermalDispatch)
-        #set_device_model!(template_uc, RenewableDispatch, RenewableFullDispatch)
-        #set_device_model!(template_uc, PowerLoad, StaticPowerLoad)
-        #set_device_model!(template_uc, HydroDispatch, FixedOutput)
     else
         raw_data_path = joinpath(data_base, "data", "RTS-GMLC-master_"*run_name_base)
         sys = build_modified_RTS_GMLC_DA_sys(; raw_data = raw_data_path)
@@ -317,38 +253,18 @@ function run_sim(run_name_base,copper1,lp1,i)
         set_transmission_model!(template_uc, CopperPlatePowerModel)
     end
 
-
-
     problems = SimulationProblems(
         UC = OperationsProblem(template_uc, sys, optimizer = solver,balance_slack_variables = true),
-        # ED = OperationsProblem(
-        #     template_ed,
-        #     sys_RT,
-        #     optimizer = solver,
-        #     balance_slack_variables = true,
-        # ),
     )
-
-    #feedforward_chronologies = Dict(("UC" => "ED") => Synchronize(periods = 24))
-    #feedforward = Dict(
-    #     ("ED", :devices, :ThermalStandard) => SemiContinuousFF(
-    #         binary_source_problem = PSI.ON,
-    #         affected_variables = [PSI.ACTIVE_POWER],
-    #     ),
-    # )
 
     DA_RT_sequence = SimulationSequence(
         problems = problems,
         intervals = intervals,
         ini_cond_chronology = IntraProblemChronology(),
-        #ini_cond_chronology = InterProblemChronology(),
-        #feedforward_chronologies = feedforward_chronologies,
-        #feedforward = feedforward,
     )
     run_folder = mkpath(joinpath(simulation_folder_base, run_name_base))
 
     for month in months
-        #month = 9
         if us ==false
             run_name = "rts-test_"*run_name_base*string(month)
         else
@@ -358,7 +274,6 @@ function run_sim(run_name_base,copper1,lp1,i)
 
         num_steps = days[month]
         simulation_folder = RunScenario(problems,DA_RT_sequence,sys,run_name_base, num_steps,month)
-        #mv(simulation_folder,joinpath(run_folder2,"1"),force=true)
         mv(simulation_folder,joinpath(run_folder2,string(i)),force=true)
         rm(joinpath(simulation_folder_base, run_name),force=true,recursive=true)
     end
